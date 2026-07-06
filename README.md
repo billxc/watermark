@@ -19,7 +19,8 @@
 2. 填写水印文字（如「仅供XX实名认证使用」）并调整样式
 3. 点「保存图片」下载
 
-## 致谢
+## 致谢与授权
 
-- 原始源码：[zsxeee/Watermark-helper](https://github.com/zsxeee/Watermark-helper)
-- Fork 自：[shihuili1218/watermark](https://github.com/shihuili1218/watermark)
+本项目基于 [zsxeee/Watermark-helper](https://github.com/zsxeee/Watermark-helper)（MIT，Copyright © 2020 zsxeee）的 `watermark-helper.html` 派生：核心的旋转平铺水印算法来自原作者，本仓库在其上修复了 EXIF 方向、保存性能等问题。经 [shihuili1218/watermark](https://github.com/shihuili1218/watermark) 中转。
+
+以 [MIT](./LICENSE) 协议开源，保留原作者版权声明。
