@@ -4,21 +4,24 @@
     <meta charset="UTF-8">
     <title>证件水印</title>
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="description" content="给身份证/证件照片加防盗用水印，图片仅在本地浏览器处理，绝不上传服务器。">
+    <meta name="theme-color" content="#2c3e50">
     <style>
         body {
-            margin: auto;
-            max-width: 60vh;
+            margin: 12px auto;
+            max-width: min(500px, 92vw);
+            font-family: sans-serif;
+            color: #2c3e50;
         }
 
-        img {
+        img, canvas {
             border: 3px solid #2c3e50;
             border-radius: 5px;
             width: 100%;
-            box-sizing: border-box
+            box-sizing: border-box;
         }
 
         canvas {
-            width: 100%;
             height: 0;
         }
 
@@ -27,12 +30,35 @@
             align-items: center;
             margin-top: 8px;
         }
+
+        label > input {
+            margin-left: 4px;
+        }
+
+        .tip {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin: 8px 0;
+            line-height: 1.5;
+        }
+
+        #save {
+            justify-content: center;
+            margin-top: 16px;
+            padding: 10px;
+            background: #2c3e50;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 16px;
+        }
     </style>
 </head>
 <body>
 <canvas></canvas>
 <div>
     <input id="upload-input" type="file" accept="image/*">
+    <p class="tip">🔒 图片仅在本地浏览器处理，不会上传到任何服务器。</p>
     <label>
         水印文字：
         <input id="content" type="text" value="仅供XX实名认证使用">
@@ -55,61 +81,126 @@
     </label>
     <label>
         水印字体：
-        <input id="font" type="text"  value="sans-serif">
+        <input id="font" type="text" value="sans-serif">
     </label>
-    <a href="javascript:alert('请先打开图片')" download>保存图片</a>
+    <a id="save" href="javascript:alert('请先打开图片')" download="证件水印.png">保存图片</a>
 </div>
 <script>
     var img = null;
+    var STORE_KEY = 'watermark-settings';
+    var SETTINGS = ['content', 'color', 'alpha', 'size', 'gap', 'font'];
+
+    // 恢复上次的水印设置
+    restoreSettings();
+
     document.addEventListener('change', function (ev) {
         if (ev.target.type === 'file') {
             if (!ev.target.files.length) return;
-            var file = ev.target.files[0];
-            createBitmap(file, function (result) {
+            loadImage(ev.target.files[0], function (result) {
                 img = result;
-                repaint()
+                scheduleRepaint();
             });
         } else {
-            repaint()
+            saveSettings();
+            scheduleRepaint();
         }
     });
+    // range 滑块拖动时实时预览（input 事件），但节流到每帧一次
+    document.addEventListener('input', function (ev) {
+        if (ev.target.tagName === 'INPUT') scheduleRepaint();
+    });
+
+    var rafId = null;
+    function scheduleRepaint() {
+        if (rafId) return;
+        rafId = requestAnimationFrame(function () {
+            rafId = null;
+            repaint();
+        });
+    }
 
     function repaint() {
         if (!img) return;
-        var ctx = document.getElementsByTagName('canvas')[0].getContext('2d');
-        ctx.canvas.width = img.width;
-        ctx.canvas.height = img.height;
+        var canvas = document.getElementsByTagName('canvas')[0];
+        var ctx = canvas.getContext('2d');
+        // 重设尺寸会自动清空画布并复位变换矩阵
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.style.height = (img.height / img.width) * 100 + '%';
+
         var maxSize = Math.max(img.height, img.width);
-        ctx.canvas.style.height = (img.height / img.width) * 100 + '%';
-        ctx.restore();
         ctx.drawImage(img, 0, 0);
+
         ctx.fillStyle = document.getElementById('color').value;
         ctx.globalAlpha = document.getElementById('alpha').value / 100;
-        var size = (document.getElementById('size').value * maxSize / 100);
-        ctx.font = size + 'px "'+document.getElementById('font').value+'"';
+        var size = document.getElementById('size').value * maxSize / 100;
+        ctx.font = size + 'px "' + document.getElementById('font').value + '"';
         ctx.textBaseline = 'middle';
-        ctx.rotate(-45 * Math.PI / 180);
-        var gap = size * document.getElementById('gap').value / 100;
+
         var content = document.getElementById('content').value;
         if (!content.length) return;
-        var limit = Math.sqrt(2*(maxSize*maxSize));
-        var breaker = ctx.measureText(content).width;
-        for (var h = -maxSize, even = false; h <= limit; h += size + gap, even = !even){
-            for (var v = -maxSize-(even?breaker/2:0); v<=limit+(even?breaker/2:0); v += breaker + size){
-                ctx.fillText(content, v, h);
+
+        // 在旋转坐标系里平铺水印，用 save/restore 隔离变换
+        ctx.save();
+        ctx.rotate(-45 * Math.PI / 180);
+        var gap = size * document.getElementById('gap').value / 100;
+        var limit = Math.sqrt(2 * maxSize * maxSize);
+        var textWidth = ctx.measureText(content).width;
+        for (var y = -maxSize, even = false; y <= limit; y += size + gap, even = !even) {
+            var offset = even ? textWidth / 2 : 0;
+            for (var x = -maxSize - offset; x <= limit + offset; x += textWidth + size) {
+                ctx.fillText(content, x, y);
             }
         }
-        document.getElementsByTagName('a')[0].href = ctx.canvas.toDataURL()
-    }
-    function createBitmap(blob, callback) {
-        var img = document.createElement('img');
-        img.addEventListener('load', function () {
-            callback(this);
-        });
-        img.src = URL.createObjectURL(blob);
+        ctx.restore();
     }
 
-    console.log("感谢提供的源码：https://github.com/zsxeee/Watermark-helper.git")
+    // 点保存时才生成 dataURL（toDataURL 较慢，不放在每帧预览里）
+    document.getElementById('save').addEventListener('click', function (ev) {
+        if (!img) return; // 未打开图片时保留提示行为
+        ev.currentTarget.href = document.getElementsByTagName('canvas')[0].toDataURL('image/png');
+    });
+
+    // 优先用 createImageBitmap 并按 EXIF 方向纠正（修复手机竖拍照片被转向的问题）
+    function loadImage(blob, callback) {
+        if (window.createImageBitmap) {
+            createImageBitmap(blob, {imageOrientation: 'from-image'})
+                .then(callback)
+                .catch(function () { loadImageFallback(blob, callback); });
+        } else {
+            loadImageFallback(blob, callback);
+        }
+    }
+
+    function loadImageFallback(blob, callback) {
+        var el = document.createElement('img');
+        var url = URL.createObjectURL(blob);
+        el.addEventListener('load', function () {
+            URL.revokeObjectURL(url); // 用完释放，避免内存泄漏
+            callback(el);
+        });
+        el.src = url;
+    }
+
+    function saveSettings() {
+        try {
+            var data = {};
+            SETTINGS.forEach(function (id) { data[id] = document.getElementById(id).value; });
+            localStorage.setItem(STORE_KEY, JSON.stringify(data));
+        } catch (e) { /* localStorage 不可用时忽略 */ }
+    }
+
+    function restoreSettings() {
+        try {
+            var data = JSON.parse(localStorage.getItem(STORE_KEY));
+            if (!data) return;
+            SETTINGS.forEach(function (id) {
+                if (data[id] != null) document.getElementById(id).value = data[id];
+            });
+        } catch (e) { /* 忽略损坏的数据 */ }
+    }
+
+    console.log("感谢提供的源码：https://github.com/zsxeee/Watermark-helper.git");
 </script>
 </body>
 </html>
