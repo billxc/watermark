@@ -52,13 +52,32 @@
             border-radius: 5px;
             font-size: 16px;
         }
+
+        /* 拖拽图片到页面时的高亮 */
+        body.dragging {
+            outline: 4px dashed #2c3e50;
+            outline-offset: -8px;
+        }
+
+        body.dragging::after {
+            content: "松手即可打开图片";
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: #2c3e50;
+            background: rgba(255, 255, 255, .75);
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
 <canvas></canvas>
 <div>
     <input id="upload-input" type="file" accept="image/*">
-    <p class="tip">🔒 图片仅在本地浏览器处理，不会上传到任何服务器。</p>
+    <p class="tip">🔒 图片仅在本地浏览器处理，不会上传到任何服务器。<br>也可直接把图片拖拽到本页任意位置。</p>
     <label>
         水印文字：
         <input id="content" type="text" value="仅供XX实名认证使用">
@@ -95,16 +114,45 @@
 
     document.addEventListener('change', function (ev) {
         if (ev.target.type === 'file') {
-            if (!ev.target.files.length) return;
-            loadImage(ev.target.files[0], function (result) {
-                img = result;
-                scheduleRepaint();
-            });
+            if (ev.target.files.length) handleFile(ev.target.files[0]);
         } else {
             saveSettings();
             scheduleRepaint();
         }
     });
+
+    // 拖拽图片到页面任意位置即可打开（用深度计数避免子元素间的高亮闪烁）
+    var dragDepth = 0;
+    document.addEventListener('dragenter', function (ev) {
+        if (!hasFiles(ev.dataTransfer)) return;
+        ev.preventDefault();
+        if (dragDepth++ === 0) document.body.classList.add('dragging');
+    });
+    document.addEventListener('dragover', function (ev) {
+        if (hasFiles(ev.dataTransfer)) ev.preventDefault(); // 必须 preventDefault 才会触发 drop
+    });
+    document.addEventListener('dragleave', function () {
+        if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); }
+    });
+    document.addEventListener('drop', function (ev) {
+        ev.preventDefault();
+        dragDepth = 0;
+        document.body.classList.remove('dragging');
+        var files = ev.dataTransfer && ev.dataTransfer.files;
+        if (files && files.length) handleFile(files[0]);
+    });
+
+    function hasFiles(dt) {
+        return dt && dt.types && Array.prototype.indexOf.call(dt.types, 'Files') !== -1;
+    }
+
+    function handleFile(file) {
+        if (!file || file.type.indexOf('image/') !== 0) return; // 只接受图片
+        loadImage(file, function (result) {
+            img = result;
+            scheduleRepaint();
+        });
+    }
     // range 滑块拖动时实时预览（input 事件），但节流到每帧一次
     document.addEventListener('input', function (ev) {
         if (ev.target.tagName === 'INPUT') scheduleRepaint();
