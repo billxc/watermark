@@ -23,6 +23,33 @@
 
         canvas {
             height: 0;
+            display: block;
+            cursor: crosshair;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .actions button {
+            flex: 1;
+            padding: 6px 10px;
+            border: 1px solid #2c3e50;
+            border-radius: 5px;
+            background: #fff;
+            color: #2c3e50;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .actions button:disabled {
+            opacity: .45;
+            cursor: not-allowed;
         }
 
         label, a {
@@ -77,7 +104,19 @@
 <canvas></canvas>
 <div>
     <input id="upload-input" type="file" accept="image/*">
-    <p class="tip">🔒 图片仅在本地浏览器处理，不会上传到任何服务器。<br>也可直接把图片拖拽到本页任意位置。</p>
+    <p class="tip">🔒 图片仅在本地浏览器处理，不会上传到任何服务器。<br>也可直接把图片拖拽到本页任意位置；打开图片后在画布上涂抹即可打马赛克。</p>
+    <label>
+        马赛克粗细：
+        <input id="mosaic-brush" type="range" min="1" max="15" value="5">
+    </label>
+    <label>
+        马赛克粒度：
+        <input id="mosaic-block" type="range" min="1" max="10" value="3">
+    </label>
+    <div class="actions">
+        <button id="mosaic-undo" type="button" disabled>撤销马赛克</button>
+        <button id="mosaic-clear" type="button" disabled>清除马赛克</button>
+    </div>
     <label>
         水印文字：
         <input id="content" type="text" value="仅供XX实名认证使用">
@@ -106,8 +145,14 @@
 </div>
 <script>
     var img = null;
+    var strokes = [];
+    var activeStroke = null;
+    var mosaicTileCanvas = document.createElement('canvas');
+    var mosaicMaskCanvas = document.createElement('canvas');
+    var cachedTileImg = null;
+    var cachedBlockSize = 0;
     var STORE_KEY = 'watermark-settings';
-    var SETTINGS = ['content', 'color', 'alpha', 'size', 'gap', 'font'];
+    var SETTINGS = ['content', 'color', 'alpha', 'size', 'gap', 'font', 'mosaic-brush', 'mosaic-block'];
 
     // 恢复上次的水印设置
     restoreSettings();
@@ -150,12 +195,81 @@
         if (!file || file.type.indexOf('image/') !== 0) return; // 只接受图片
         loadImage(file, function (result) {
             img = result;
+            strokes = [];
+            activeStroke = null;
+            updateMosaicButtons();
             scheduleRepaint();
         });
     }
     // range 滑块拖动时实时预览（input 事件），但节流到每帧一次
     document.addEventListener('input', function (ev) {
         if (ev.target.tagName === 'INPUT') scheduleRepaint();
+    });
+
+    var mainCanvas = document.getElementsByTagName('canvas')[0];
+
+    function getCanvasPoint(ev) {
+        var rect = mainCanvas.getBoundingClientRect();
+        var borderLeft = mainCanvas.clientLeft || 0;
+        var borderTop = mainCanvas.clientTop || 0;
+        var contentW = mainCanvas.clientWidth || (rect.width - borderLeft * 2);
+        var contentH = mainCanvas.clientHeight || (rect.height - borderTop * 2);
+        return {
+            x: (ev.clientX - rect.left - borderLeft) * (mainCanvas.width / contentW),
+            y: (ev.clientY - rect.top - borderTop) * (mainCanvas.height / contentH)
+        };
+    }
+
+    function updateMosaicButtons() {
+        var empty = strokes.length === 0;
+        document.getElementById('mosaic-undo').disabled = empty;
+        document.getElementById('mosaic-clear').disabled = empty;
+    }
+
+    mainCanvas.addEventListener('pointerdown', function (ev) {
+        if (!img || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+        ev.preventDefault();
+        if (mainCanvas.setPointerCapture) mainCanvas.setPointerCapture(ev.pointerId);
+        var maxSize = Math.max(img.height, img.width);
+        var brushWidth = document.getElementById('mosaic-brush').value * maxSize / 100;
+        activeStroke = {
+            pointerId: ev.pointerId,
+            width: brushWidth,
+            points: [getCanvasPoint(ev)]
+        };
+        strokes.push(activeStroke);
+        updateMosaicButtons();
+        scheduleRepaint();
+    });
+
+    mainCanvas.addEventListener('pointermove', function (ev) {
+        if (!activeStroke || ev.pointerId !== activeStroke.pointerId) return;
+        ev.preventDefault();
+        activeStroke.points.push(getCanvasPoint(ev));
+        scheduleRepaint();
+    });
+
+    function endStroke(ev) {
+        if (!activeStroke || ev.pointerId !== activeStroke.pointerId) return;
+        activeStroke = null;
+    }
+    mainCanvas.addEventListener('pointerup', endStroke);
+    mainCanvas.addEventListener('pointercancel', endStroke);
+
+    document.getElementById('mosaic-undo').addEventListener('click', function () {
+        if (!strokes.length) return;
+        strokes.pop();
+        activeStroke = null;
+        updateMosaicButtons();
+        scheduleRepaint();
+    });
+
+    document.getElementById('mosaic-clear').addEventListener('click', function () {
+        if (!strokes.length) return;
+        strokes = [];
+        activeStroke = null;
+        updateMosaicButtons();
+        scheduleRepaint();
     });
 
     var rafId = null;
@@ -167,9 +281,52 @@
         });
     }
 
+    function drawMosaic(ctx, maxSize) {
+        if (!strokes.length) return;
+        var blockSize = Math.max(4, Math.round(document.getElementById('mosaic-block').value * maxSize / 200));
+        if (cachedTileImg !== img || cachedBlockSize !== blockSize) {
+            var tileW = Math.max(1, Math.round(img.width / blockSize));
+            var tileH = Math.max(1, Math.round(img.height / blockSize));
+            mosaicTileCanvas.width = tileW;
+            mosaicTileCanvas.height = tileH;
+            mosaicTileCanvas.getContext('2d').drawImage(img, 0, 0, tileW, tileH);
+            cachedTileImg = img;
+            cachedBlockSize = blockSize;
+        }
+
+        mosaicMaskCanvas.width = img.width;
+        mosaicMaskCanvas.height = img.height;
+        var maskCtx = mosaicMaskCanvas.getContext('2d');
+        maskCtx.lineCap = 'round';
+        maskCtx.lineJoin = 'round';
+        maskCtx.strokeStyle = '#000';
+
+        for (var i = 0; i < strokes.length; i++) {
+            var s = strokes[i];
+            var pts = s.points;
+            if (!pts.length) continue;
+            maskCtx.lineWidth = s.width;
+            maskCtx.beginPath();
+            maskCtx.moveTo(pts[0].x, pts[0].y);
+            if (pts.length === 1) {
+                maskCtx.lineTo(pts[0].x + 0.01, pts[0].y);
+            } else {
+                for (var j = 1; j < pts.length; j++) {
+                    maskCtx.lineTo(pts[j].x, pts[j].y);
+                }
+            }
+            maskCtx.stroke();
+        }
+
+        maskCtx.globalCompositeOperation = 'source-in';
+        maskCtx.imageSmoothingEnabled = false;
+        maskCtx.drawImage(mosaicTileCanvas, 0, 0, img.width, img.height);
+        ctx.drawImage(mosaicMaskCanvas, 0, 0);
+    }
+
     function repaint() {
         if (!img) return;
-        var canvas = document.getElementsByTagName('canvas')[0];
+        var canvas = mainCanvas;
         var ctx = canvas.getContext('2d');
         // 重设尺寸会自动清空画布并复位变换矩阵
         canvas.width = img.width;
@@ -178,6 +335,7 @@
 
         var maxSize = Math.max(img.height, img.width);
         ctx.drawImage(img, 0, 0);
+        drawMosaic(ctx, maxSize);
 
         ctx.fillStyle = document.getElementById('color').value;
         ctx.globalAlpha = document.getElementById('alpha').value / 100;
